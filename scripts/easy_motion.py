@@ -9,6 +9,7 @@ import subprocess
 import sys
 import termios
 import time
+import unicodedata
 
 PY2 = sys.version_info.major < 3  # is needed for correct mypy checking
 
@@ -463,12 +464,41 @@ def parse_arguments():
     )
 
 
+def char_cell_width(char):
+    # type: (str) -> int
+    # Zero-width combining marks do not occupy a terminal cell
+    if unicodedata.combining(char):
+        return 0
+    # East Asian Wide and Fullwidth characters (CJK, most emoji) occupy two cells
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+
+
+def cell_col_to_char_index(line, cell_col):
+    # type: (str, int) -> int
+    # tmux reports cursor columns in terminal cells, but all text handling below
+    # works on character indices. Map a cell column onto the character covering it.
+    current_cell = 0
+    for char_index, char in enumerate(line):
+        char_width = char_cell_width(char)
+        if current_cell + char_width > cell_col:
+            return char_index
+        current_cell += char_width
+    return len(line)
+
+
+def char_index_to_cell_col(line, char_index):
+    # type: (str, int) -> int
+    return sum(char_cell_width(char) for char in line[:char_index])
+
+
 def convert_row_col_to_text_pos(row, col, text):
     # type: (int, int, str) -> int
     lines = text.split("\n")
     # Limit `row` and `col` to the existing text
     row = max(min(row, len(lines) - 1), 0)
     row_line = lines[row]
+    # `col` is a terminal cell column and must be converted to a character index first
+    col = cell_col_to_char_index(row_line, max(col, 0))
     col = max(min(col, len(row_line) - 1), 0)
 
     cursor_position = sum(len(line) for line in lines[:row]) + col
@@ -485,7 +515,8 @@ def convert_text_pos_to_row_col(textpos, text):
     for line in lines:
         line_length = len(line)
         if current_textpos + line_length > textpos:
-            col = textpos - current_textpos
+            # Convert the character index back to a terminal cell column for tmux
+            col = char_index_to_cell_col(line, textpos - current_textpos)
             break
         row += 1
         current_textpos += line_length + 1
