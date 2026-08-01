@@ -43,6 +43,7 @@ easy_motion_setup() {
 
     tmux copy-mode -t "${pane_id}" && \
     EASY_MOTION_CURSOR_POSITION="$(read_cursor_position "${pane_id}")" && \
+    EASY_MOTION_SCROLL_POSITION="$(get_pane_scroll_position "${pane_id}")" && \
     EASY_MOTION_PANE_SIZE="$(get_pane_size "${pane_id}")" && \
     EASY_MOTION_ORIGINAL_SESSION_ID="${session_id}" && \
     EASY_MOTION_ORIGINAL_WINDOW_ID="${window_id}" && \
@@ -133,7 +134,7 @@ easy_motion() {
         if [[ "${ready_command}" != "single-target" ]]; then
             easy_motion_toggle_pane || return
         fi
-        set_cursor_position "${pane_id}" "${jump_cursor_position}"
+        set_cursor_position "${pane_id}" "${jump_cursor_position}" "${EASY_MOTION_SCROLL_POSITION}"
 
         if (( EASY_MOTION_AUTO_BEGIN_SELECTION )); then
             tmux if -F "#{?selection_present,0,1}" "send-keys -t ${pane_id} -X begin-selection"

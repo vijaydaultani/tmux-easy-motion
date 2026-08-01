@@ -255,14 +255,25 @@ capture_pane() {
                       > "${capture_filepath}"
 }
 
+get_pane_scroll_position() {
+    local pane_id current_pane_scroll_position
+
+    pane_id="$1"
+
+    # `#{scroll_position}` is empty when the pane is not in copy mode
+    current_pane_scroll_position="$(tmux display-message -p -t "${pane_id}" "#{scroll_position}")"
+
+    echo "${current_pane_scroll_position:-0}"
+}
+
 get_pane_scroll_range() {
     local pane_id
     local current_pane_scroll_position current_pane_height
 
     pane_id="$1"
 
-    IFS=':' read -r current_pane_scroll_position current_pane_height <<< \
-        "$(tmux display-message -p -t "${pane_id}" "#{scroll_position}:#{pane_height}")"
+    current_pane_scroll_position="$(get_pane_scroll_position "${pane_id}")"
+    current_pane_height="$(tmux display-message -p -t "${pane_id}" "#{pane_height}")"
 
     echo "$(( - current_pane_scroll_position )):$(( - current_pane_scroll_position + current_pane_height - 1 ))"
 }
@@ -417,16 +428,38 @@ read_cursor_position() {
 }
 
 set_cursor_position() {
-    local pane_id row_col
+    local pane_id row_col target_scroll_position
     local row col current_row current_col rel_row rel_col
+    local current_scroll_position rel_scroll_position
 
     pane_id="$1"
     row_col="$2"
+    target_scroll_position="$3"
 
     IFS=':' read -r row col <<< "${row_col}"
+
+    # Enter copy mode *before* measuring anything: swapping the pane back can
+    # drop it out of copy mode, in which case `read_cursor_position` would
+    # report the shell cursor instead of the copy cursor.
+    tmux copy-mode -t "${pane_id}"
+
+    # `row` is relative to the viewport that was captured, so the pane has to be
+    # scrolled back to that exact offset first. A `swap-pane` that resizes the
+    # pane — which happens whenever the pane is not the full window size, i.e.
+    # for any split — discards the copy mode scroll offset. Without this, every
+    # jump taken while scrolled into the history lands off by the scroll delta.
+    if [[ -n "${target_scroll_position}" ]]; then
+        current_scroll_position="$(get_pane_scroll_position "${pane_id}")"
+        rel_scroll_position="$(( target_scroll_position - current_scroll_position ))"
+        if (( rel_scroll_position > 0 )); then
+            tmux send-keys -t "${pane_id}" -X -N "${rel_scroll_position}" scroll-up
+        elif (( rel_scroll_position < 0 )); then
+            tmux send-keys -t "${pane_id}" -X -N "$(( -rel_scroll_position ))" scroll-down
+        fi
+    fi
+
     IFS=':' read -r current_row current_col <<< "$(read_cursor_position "${pane_id}")"
     rel_row="$(( row - current_row ))"
-    tmux copy-mode -t "${pane_id}"
     if (( rel_row < 0 )); then
         tmux send-keys -t "${pane_id}" -X -N "$(( -rel_row ))" cursor-up
     elif (( rel_row > 0 )); then
